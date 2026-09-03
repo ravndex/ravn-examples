@@ -106,6 +106,7 @@ Every response carries `x-request-id`. Quote it if you report a bad quote — it
 - Docs — <https://docs.ravn.exchange>
 - App — <https://app.ravn.exchange>
 - MCP server — `https://app.ravn.exchange/api/mcp`
+- OpenAPI spec (Postman / Insomnia import) — `https://app.ravn.exchange/openapi.json`
 - Partnerships — team@ravn.exchange · [@ravnexchange](https://x.com/ravnexchange)
 
 MIT licensed. Issues and PRs welcome.
