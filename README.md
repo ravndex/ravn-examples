@@ -49,22 +49,28 @@ switch (execution.executionType) {
 
 ### The one thing that trips people up
 
-`TRANSACTION` and `SIGNATURE` payloads may carry an **`approval`** — an ERC-20 `approve()` that
-must be **mined** before the swap.
+An ERC-20 swap is really **two** transactions. Before any contract can move your tokens you must
+sign a separate on-chain permission — an `approve()`. `TRANSACTION` and `SIGNATURE` payloads carry
+that ready to send, as **`approval`**, whenever it's needed.
 
 ```ts
 if (execution.approval) {
   const hash = await wallet.sendTransaction(execution.approval);
   await client.waitForTransactionReceipt({ hash });   // MINED, not just broadcast
 }
+// …now send the swap
 ```
 
-Broadcasting the swap before the allowance lands reverts on `transferFrom` and the user eats the
-gas. On gasless venues (CoW, Bebop) it is quieter and worse: the order is accepted and simply
-never fills. Native-coin sells and already-approved tokens omit `approval` entirely.
+Broadcasting the swap before the allowance is **mined** reverts on `transferFrom` and the user eats
+the gas. On gasless venues (CoW, Bebop) it's quieter and worse: the order is accepted and simply
+**never fills**, with no error. Native-coin sells, already-approved tokens and `DEPOSIT` routes omit
+`approval` entirely.
 
-Read the on-chain allowance for `approval.spender` first and skip it when it already covers
-`approval.amount`.
+RAVN doesn't read the chain for you, so `approval` can appear on a token you've already approved —
+check the allowance for `approval.spender` and skip it when it already covers `approval.amount`.
+
+`unlimitedRecommended: true` (CoW) means the venue would rather you approve once for a large amount
+than pay approval gas on every swap. `data` still encodes the exact amount; raising it is your call.
 
 ## Amounts
 

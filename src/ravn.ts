@@ -76,12 +76,22 @@ export interface TokenInfo {
  * for `spender` first and skip this when it already covers `amount`.
  */
 export interface Approval {
+  /** The ERC-20 token contract to send this to. */
   to: string;
+  /** Encoded approve(spender, amount) — send as-is. */
   data: string;
   value: string;
   chainId?: number;
+  /** Who receives the allowance. */
   spender?: string;
+  /** Minimum allowance this swap needs, smallest unit. */
   amount: string;
+  /**
+   * The venue would rather you approve once for a large amount than per swap (CoW: an exact
+   * approval costs gas on every swap, cancelling out its gasless route). `data` still encodes
+   * the exact `amount` — raising it is your call. Both work.
+   */
+  unlimitedRecommended?: boolean;
 }
 
 export type Execution =
