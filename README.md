@@ -1,5 +1,7 @@
 # RAVN examples
 
+[![smithery badge](https://smithery.ai/badge/team-dgp6/ravn)](https://smithery.ai/servers/team-dgp6/ravn)
+
 Working code for the [RAVN](https://ravn.exchange) cross-chain swap API — including **native
 Bitcoin**, not wrapped BTC.
 
