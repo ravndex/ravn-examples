@@ -1,0 +1,24 @@
+{
+  "name": "ravn-examples",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Working examples for the RAVN cross-chain swap API — native BTC, EVM, Solana. MCP, x402, and REST.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "btc-out": "tsx src/btc-out.ts",
+    "agent": "tsx src/agent-swap.ts",
+    "x402": "tsx src/x402-client.ts",
+    "health": "tsx src/health.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0",
+    "viem": "^2.54.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.0"
+  }
+}
