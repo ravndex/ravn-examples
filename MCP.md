@@ -1,7 +1,9 @@
 # RAVN over MCP
 
-RAVN runs a hosted MCP server. Point any MCP client at it and `ravn_quote`, `ravn_execute`,
-`ravn_status`, `ravn_health` and `ravn_btc_prepare_send` show up as native tools.
+RAVN runs a hosted MCP server. Point any MCP client at it and ten tools show up natively:
+`ravn_quote`, `ravn_execute`, `ravn_submit_signature`, `ravn_status`, `ravn_health`,
+`ravn_tokens`, `ravn_tokens_resolve`, `ravn_btc_coverage`, `ravn_chains`, and
+`ravn_btc_prepare_send`.
 
 **No signup. No API key. No payment.** It is the same routing engine, the same 0 bps, and the
 same quote a person gets in the app.
