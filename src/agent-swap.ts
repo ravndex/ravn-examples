@@ -29,8 +29,8 @@ const tools: Anthropic.Tool[] = [
   {
     name: "get_quote",
     description:
-      "Price a crypto swap through RAVN across 16 chains, including native (non-wrapped) Bitcoin " +
-      "and Solana. Returns the best net output across 12 venues. Does not move any funds.",
+      "Price a crypto swap through RAVN across EVM chains, native (non-wrapped) Bitcoin " +
+      "and Solana. Returns the best net output across every live venue. Does not move any funds.",
     input_schema: {
       type: "object",
       properties: {

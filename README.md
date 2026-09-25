@@ -5,8 +5,8 @@
 Working code for the [RAVN](https://ravn.exchange) cross-chain swap API — including **native
 Bitcoin**, not wrapped BTC.
 
-One integration covers 16 chains (14 EVM + Bitcoin + Solana). Every quote races 12 execution
-venues in parallel and the best net output wins. **RAVN takes 0 bps on every route.** Non-custodial:
+One integration covers EVM chains, native Bitcoin and Solana. Every quote races every live
+execution venue in parallel and the best net output wins. **RAVN takes 0 bps on every route.** Non-custodial:
 RAVN never holds your funds and writes no smart contracts of its own.
 
 No signup required to start. Every example below runs anonymously.
