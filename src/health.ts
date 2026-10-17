@@ -5,9 +5,11 @@
  *
  * No key, no signup, no wallet. If this prints venues, you are already integrated enough to quote.
  */
-import { ravn } from "./ravn.js";
+import { RAVN_BASE } from "./ravn.js";
 
-const h = await ravn.health();
+// /health isn't in the SDK (0.1.15): a plain fetch.
+const res = await fetch(`${RAVN_BASE}/health`);
+const { data: h } = (await res.json()) as { data: { status: string; venues: { id: string; name: string; healthy: boolean }[] } };
 
 console.log(`\nRAVN: ${h.status}  (${h.venues.filter((v) => v.healthy).length}/${h.venues.length} venues healthy)\n`);
 for (const v of h.venues) {
