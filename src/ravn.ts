@@ -14,7 +14,7 @@ export const RAVN_BASE = process.env.RAVN_BASE_URL ?? "https://app.ravn.exchange
 
 export const ravn = new RavnClient({
   baseUrl: RAVN_BASE,
-  // Optional. Anonymous works at 30 req/min; a free key raises it to 120.
+  // Optional. Anonymous works at 30 req/min (status polls 120); a free key raises it to 120 (480).
   apiKey: process.env.RAVN_API_KEY || undefined,
 });
 

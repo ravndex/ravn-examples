@@ -21,7 +21,7 @@
 import { createWalletClient, encodeFunctionData, erc20Abi, http, publicActions, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
-import { executeAndTrack, type SettlementStatus } from "@ravnexchange/sdk";
+import { ExecuteAndTrackError, executeAndTrack, type SettlementStatus } from "@ravnexchange/sdk";
 import { ravn, CHAIN, fromBaseUnits, toBaseUnits } from "./ravn.js";
 
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -83,11 +83,12 @@ async function main() {
     { quoteToken: quote.quoteToken, destinationAddress: BTC_DESTINATION },
     {
       sendTransaction: (tx) => wallet.sendTransaction(asTx(tx)),
-      // Must resolve to the receipt itself: RAVN's fee is only sent on a swap whose own receipt
-      // says success. One that resolves to nothing sends no fee.
+      // Must resolve to the receipt itself (typed TransactionReceiptLike: viem's fits as is): RAVN's
+      // fee is only sent on a swap whose own receipt says success.
       waitForReceipt: (hash) => wallet.waitForTransactionReceipt({ hash: hash as Hex }),
       signTypedData: (typedData) => wallet.signTypedData(typedData as Parameters<typeof wallet.signTypedData>[0]),
-      // Most venues send `approval` even when the allowance is already in place: skip it then.
+      // RAVN leaves `approval` out when its own allowance read covers it, but keeps it when that
+      // read fails: skip it then.
       hasAllowance: async (approval) =>
         !!approval.spender &&
         (await wallet.readContract({
@@ -97,8 +98,9 @@ async function main() {
           args: [account.address, approval.spender.toLowerCase() as Hex],
         })) >= BigInt(approval.amount),
     },
-    // We poll ourselves (track below): it survives a failed status call and doesn't stop at
-    // `expired` or `not_found`, which executeAndTrack 0.1.15's own polling does.
+    // executeAndTrack can poll for you (0.2.0: through `expired`/`not_found`, with retries). This
+    // script polls in track() instead, so a DEPOSIT, which executeAndTrack never polls, goes
+    // through the same loop.
     { pollUntilTerminal: false }
   );
 
@@ -154,5 +156,7 @@ async function track(quoteToken: string, ref: string, txHash?: string) {
 
 main().catch((e) => {
   console.error(`\n${e.name ?? "Error"}: ${e.message}${e.meta?.requestId ? ` (request ${e.meta.requestId})` : ""}`);
+  // Something was already sent or signed: every hash so far, to keep tracking the swap with.
+  if (e instanceof ExecuteAndTrackError) console.error("  resume with", e.partial);
   process.exit(1);
 });

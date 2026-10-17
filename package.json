@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.68.0",
-    "@ravnexchange/sdk": "^0.1.15",
+    "@ravnexchange/sdk": "^0.2.0",
     "viem": "^2.54.0"
   },
   "devDependencies": {

@@ -73,10 +73,11 @@ Broadcasting the swap before the allowance is **mined** reverts on `transferFrom
 the gas. On gasless venues (CoW, Bebop) it's quieter and worse: the order is accepted and simply
 **never fills**, with no error. Native-coin sells and `DEPOSIT` routes never carry `approval`.
 
-`approval` can appear on a token you've already approved: Mayan, Eco Routes and 0x Gasless check the
-chain and leave it out then, but most venues send it every time. Check the allowance for
-`approval.spender` and skip it when it already covers `approval.amount` (`btc-out.ts` does, through
-`executeAndTrack`'s `hasAllowance`).
+RAVN reads your user's allowance on-chain at `/execute` and leaves `approval` out when it already
+covers the amount. When that read fails, `approval` is included anyway, so check the allowance for
+`approval.spender` yourself and skip it when it covers `approval.amount` (`btc-out.ts` does, through
+`executeAndTrack`'s `hasAllowance`). An `approval.reset` (Ethereum USDT holding a partial allowance)
+is an `approve(spender, 0)` to send and mine first; `executeAndTrack` does.
 
 0x Gasless can also return `approvalData`: a second typed-data signature that approves the token
 gaslessly, sent to `/submit-signature` as `approvalSignature`. `executeAndTrack` signs it for you.
@@ -94,9 +95,9 @@ If your key sets a fee, a swap only pays you when you do two things:
    happened from your poll: never reported, never paid.
 
 On a `TRANSACTION`, `executeAndTrack` pays the fee and hands you the hash to poll with
-(`statusTxHash`). Its own polling (SDK 0.1.15) stops at `expired` and `not_found` and gives up on one
-failed status call, so `btc-out.ts` polls itself; it also shows the `DEPOSIT` side, which
-`executeAndTrack` leaves to you. The full checklist: <https://docs.ravn.exchange/collecting-your-fee>
+(`statusTxHash`); from SDK 0.2.0 its own polling also runs through `expired` and `not_found` and
+retries a failed status call. A `DEPOSIT` it leaves to you: `btc-out.ts` sends the deposit and the
+fee, then polls them all through one loop. The full checklist: <https://docs.ravn.exchange/collecting-your-fee>
 
 `unlimitedRecommended: true` (CoW) means the venue would rather you approve once for a large amount
 than pay approval gas on every swap. `data` still encodes the exact amount; raising it is your call.
@@ -115,10 +116,12 @@ idea what your EVM address is.
 
 | | |
 | --- | --- |
-| No key | 30 req/min per IP |
-| [Free key](https://docs.ravn.exchange/tools/get-api-key), instant, no review | 120 req/min |
+| No key | 30 req/min per IP, plus 120 `/status` polls/min |
+| [Free key](https://docs.ravn.exchange/tools/get-api-key), instant, no review | 120 req/min, plus 480 `/status` polls/min |
 
-Pass it as `x-api-key`. **CORS is enabled on every endpoint**, so browser-side dapps and wallet
+Status polls have a budget of their own (4× your limit). Every response carries `X-RateLimit-Limit`,
+`X-RateLimit-Remaining` and `X-RateLimit-Reset` (epoch seconds), and a `429` adds `Retry-After`.
+Pass your key as `x-api-key`. **CORS is enabled on every endpoint**, so browser-side dapps and wallet
 widgets can call the API directly with no server-side proxy.
 
 ## Errors
@@ -127,7 +130,8 @@ Branch on the stable `code`, never the message.
 
 `INVALID_REQUEST` (an unsupported chain is one of these) · `UNSUPPORTED_TOKEN` · `NO_LIQUIDITY` ·
 `QUOTE_EXPIRED` · `QUOTE_INVALID` · `QUOTE_NOT_EXECUTABLE` · `BUILD_FAILED` · `ORDER_REJECTED` ·
-`VENUE_RATE_LIMITED` · `RATE_LIMITED` · `UNAUTHORIZED` · `NOT_FOUND` · `NOT_CONFIGURED` · `INTERNAL`. Full table: <https://docs.ravn.exchange/errors>
+`VENUE_RATE_LIMITED` · `RATE_LIMITED` · `UNAUTHORIZED` · `UNAVAILABLE` · `NOT_FOUND` · `NOT_CONFIGURED` ·
+`INTERNAL`. The SDK adds `NETWORK_ERROR` when no response came back at all. Full table: <https://docs.ravn.exchange/errors>
 
 Every response carries `x-request-id`. Quote it if you report a bad quote — it's how we find it.
 
