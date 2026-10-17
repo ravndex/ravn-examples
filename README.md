@@ -76,7 +76,8 @@ the gas. On gasless venues (CoW, Bebop) it's quieter and worse: the order is acc
 RAVN reads your user's allowance on-chain at `/execute` and leaves `approval` out when it already
 covers the amount. When that read fails, `approval` is included anyway, so check the allowance for
 `approval.spender` yourself and skip it when it covers `approval.amount` (`btc-out.ts` does, through
-`executeAndTrack`'s `hasAllowance`). An `approval.reset` (Ethereum USDT holding a partial allowance)
+`executeAndTrack`'s `hasAllowance`). RAVN's read sees the latest block only, so run one swap per
+token and spender at a time. An `approval.reset` (Ethereum USDT holding a partial allowance)
 is an `approve(spender, 0)` to send and mine first; `executeAndTrack` does.
 
 0x Gasless can also return `approvalData`: a second typed-data signature that approves the token
@@ -119,7 +120,7 @@ idea what your EVM address is.
 | No key | 30 req/min per IP, plus 120 `/status` polls/min |
 | [Free key](https://docs.ravn.exchange/tools/get-api-key), instant, no review | 120 req/min, plus 480 `/status` polls/min |
 
-Status polls have a budget of their own (4× your limit). Every response carries `X-RateLimit-Limit`,
+Status polls have a budget of their own (4× your limit). Every rate-limited response carries `X-RateLimit-Limit`,
 `X-RateLimit-Remaining` and `X-RateLimit-Reset` (epoch seconds), and a `429` adds `Retry-After`.
 Pass your key as `x-api-key`. **CORS is enabled on every endpoint**, so browser-side dapps and wallet
 widgets can call the API directly with no server-side proxy.

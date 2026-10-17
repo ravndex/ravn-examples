@@ -155,8 +155,12 @@ async function track(quoteToken: string, ref: string, txHash?: string) {
 }
 
 main().catch((e) => {
-  console.error(`\n${e.name ?? "Error"}: ${e.message}${e.meta?.requestId ? ` (request ${e.meta.requestId})` : ""}`);
-  // Something was already sent or signed: every hash so far, to keep tracking the swap with.
-  if (e instanceof ExecuteAndTrackError) console.error("  resume with", e.partial);
+  const meta = e.meta ?? e.cause?.meta; // an ExecuteAndTrackError wraps the RavnApiError
+  console.error(`\n${e.name ?? "Error"}: ${e.message}${meta?.requestId ? ` (request ${meta.requestId})` : ""}`);
+  if (e instanceof ExecuteAndTrackError) {
+    // Something was already sent or signed (an approval, a signature): check it before retrying.
+    const { resetTxHash, approvalTxHash, txHash, statusRef, statusTxHash, signature } = e.partial;
+    console.error("  already sent or signed:", JSON.stringify({ resetTxHash, approvalTxHash, txHash, statusRef, statusTxHash, signature }));
+  }
   process.exit(1);
 });
