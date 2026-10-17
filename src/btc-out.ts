@@ -21,7 +21,7 @@
 import { createWalletClient, encodeFunctionData, erc20Abi, http, publicActions, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
-import { executeAndTrack, type QuoteDTO, type SettlementStatus } from "@ravnexchange/sdk";
+import { executeAndTrack, type SettlementStatus } from "@ravnexchange/sdk";
 import { ravn, CHAIN, fromBaseUnits, toBaseUnits } from "./ravn.js";
 
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -95,7 +95,10 @@ async function main() {
           functionName: "allowance",
           args: [account.address, approval.spender as Hex],
         })) >= BigInt(approval.amount),
-    }
+    },
+    // We poll ourselves (track below): it survives a failed status call and doesn't stop at
+    // `expired` or `not_found`, which executeAndTrack 0.1.15's own polling does.
+    { pollUntilTerminal: false }
   );
 
   const { execution } = result;
@@ -105,40 +108,28 @@ async function main() {
 
   if (execution.executionType === "DEPOSIT") {
     // executeAndTrack sends nothing for a DEPOSIT. The deposit names no token: send the quote's
-    // INPUT token, exactly deposit.amount, then RAVN's fee once the deposit has confirmed.
-    const depositHash = await sendDeposit(sendAndConfirm, quote, execution.deposit);
+    // input token (USDC here), exactly deposit.amount, then RAVN's fee once it has confirmed.
+    const { address, amount } = execution.deposit;
+    const depositHash = await sendAndConfirm({
+      to: USDC_BASE,
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [address as Hex, BigInt(amount)] }),
+    });
     console.log(`  → deposit  ${depositHash}`);
     // From Base it's always a transaction; Bitcoin and Solana fees go inside the deposit itself.
     if (result.feePayment?.kind === "transaction") {
-      txHash = await sendAndConfirm(result.feePayment.transaction);
-      console.log(`  → fee tx   ${txHash}`);
+      try {
+        txHash = await sendAndConfirm(result.feePayment.transaction);
+        console.log(`  → fee tx   ${txHash}`);
+      } catch (e) {
+        // The deposit is already sent: never stop here, or the swap goes untracked.
+        console.log(`  fee not paid, nothing is owed on this swap: ${(e as Error).message}`);
+      }
     }
   }
   if (result.feeTxHash) console.log(`  → fee tx   ${result.feeTxHash}`);
   if (result.feeError) console.log(`  fee not paid, nothing is owed on this swap: ${String(result.feeError)}`);
 
-  // executeAndTrack 0.1.15 stops polling at `expired` and `not_found`, and doesn't poll a DEPOSIT.
-  const status = result.finalStatus?.status;
-  if (status && FINAL.includes(status)) console.log(`\n  ${status}`);
-  else await track(result.quoteToken, result.statusRef ?? "", txHash);
-}
-
-async function sendDeposit(
-  sendAndConfirm: (tx: { to: string; data?: string; value?: string }) => Promise<Hex>,
-  quote: QuoteDTO,
-  deposit: { address: string; amount: string }
-) {
-  const input = quote.input.token;
-  return input.isNative
-    ? sendAndConfirm({ to: deposit.address, value: deposit.amount })
-    : sendAndConfirm({
-        to: input.address,
-        data: encodeFunctionData({
-          abi: erc20Abi,
-          functionName: "transfer",
-          args: [deposit.address as Hex, BigInt(deposit.amount)],
-        }),
-      });
+  await track(result.quoteToken, result.statusRef ?? "", txHash);
 }
 
 /** Poll with execute's quoteToken, its ref and the fee payment's hash until the status is final. */
@@ -147,9 +138,14 @@ async function track(quoteToken: string, ref: string, txHash?: string) {
   let last = "";
   // ponytail: 90 minutes covers a Bitcoin payout; past it, resume polling with the same three values.
   for (let i = 0; i < 540; i++) {
-    const { status } = await ravn.getStatus(quoteToken, ref, txHash);
-    if (status !== last) console.log(`  ${(last = status)}`);
-    if (FINAL.includes(status)) return;
+    try {
+      const { status } = await ravn.getStatus(quoteToken, ref, txHash);
+      if (status !== last) console.log(`  ${(last = status)}`);
+      if (FINAL.includes(status)) return;
+    } catch (e) {
+      // A rate limit or a network blip: the swap is out, so keep going.
+      console.log(`  status call failed, retrying: ${(e as Error).message}`);
+    }
     await new Promise((r) => setTimeout(r, 10_000));
   }
   console.log(`  not final yet: keep polling with quoteToken, ref ${ref}${txHash ? ` and txHash ${txHash}` : ""}`);

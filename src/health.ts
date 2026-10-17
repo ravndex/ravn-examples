@@ -9,6 +9,7 @@ import { RAVN_BASE } from "./ravn.js";
 
 // /health isn't in the SDK (0.1.15): a plain fetch.
 const res = await fetch(`${RAVN_BASE}/health`);
+if (!res.ok) throw new Error(`RAVN /health answered HTTP ${res.status}`);
 const { data: h } = (await res.json()) as { data: { status: string; venues: { id: string; name: string; healthy: boolean }[] } };
 
 console.log(`\nRAVN: ${h.status}  (${h.venues.filter((v) => v.healthy).length}/${h.venues.length} venues healthy)\n`);

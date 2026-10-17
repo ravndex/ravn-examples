@@ -4,8 +4,7 @@
  * The SDK is a zero-dependency, typed wrapper around /api/v1 (quote, execute, submit-signature,
  * submit-transaction, status). Its `executeAndTrack` runs a whole swap in the right order: the
  * approval mined first, 0x Gasless's `approvalData`, RAVN's fee payment, and status polling with
- * execute's quoteToken, its statusRef and the fee payment's hash. SDK 0.2.0 (in progress) adds
- * progress callbacks and retries.
+ * execute's quoteToken, its statusRef and the fee payment's hash.
  *
  * Docs: https://docs.ravn.exchange/sdks/core
  */

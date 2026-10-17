@@ -40,7 +40,8 @@ POST /status  → pending → processing → success (or refunded / failed)
 ```
 
 Poll `/status` with the `quoteToken` **execute** returned, its `statusRef` (else your swap's tx hash),
-and, when you paid a fee beside the swap, that payment's hash as `txHash`, until the status is final.
+and as `txHash` the hash of the fee payment you sent beside the swap, or on a two-step route (a
+`statusRef` came with a `TRANSACTION`) your swap's own tx hash, until the status is final.
 Use `POST`: a `quoteToken` can run to tens of kilobytes, and a large one in a `GET` query string fails.
 
 Everything branches on **one field**:
@@ -61,7 +62,8 @@ that ready to send, as **`approval`**, whenever it's needed.
 
 ```ts
 if (execution.approval) {
-  const hash = await wallet.sendTransaction(execution.approval);
+  const { to, data, value } = execution.approval;            // value is a decimal string
+  const hash = await wallet.sendTransaction({ to, data, value: BigInt(value) });
   await client.waitForTransactionReceipt({ hash });   // MINED, not just broadcast
 }
 // …now send the swap
@@ -87,11 +89,14 @@ If your key sets a fee, a swap only pays you when you do two things:
    Layerswap, Mayan routes paying no referrer). EVM: send `fee.transaction` once the swap has
    succeeded, or batch an ERC-20 fee with it. Bitcoin: the fee is a second output of the deposit's
    own transaction. Solana: the transfer goes inside the deposit's own transaction.
-2. **Report the swap to `/status` until it's final**, with that fee payment's hash as `txHash` on every
-   poll. On same-chain venues RAVN only learns a swap happened from your poll: never reported, never paid.
+2. **Report the swap to `/status` until it's final**, with that fee payment's hash (on a two-step
+   route, your swap's own hash) as `txHash` on every poll. On same-chain venues RAVN only learns a swap
+   happened from your poll: never reported, never paid.
 
-`executeAndTrack` does both for `TRANSACTION` and `SIGNATURE` routes; `btc-out.ts` shows the `DEPOSIT`
-side. The full checklist: <https://docs.ravn.exchange/collecting-your-fee>
+On a `TRANSACTION`, `executeAndTrack` pays the fee and hands you the hash to poll with
+(`statusTxHash`). Its own polling (SDK 0.1.15) stops at `expired` and `not_found` and gives up on one
+failed status call, so `btc-out.ts` polls itself; it also shows the `DEPOSIT` side, which
+`executeAndTrack` leaves to you. The full checklist: <https://docs.ravn.exchange/collecting-your-fee>
 
 `unlimitedRecommended: true` (CoW) means the venue would rather you approve once for a large amount
 than pay approval gas on every swap. `data` still encodes the exact amount; raising it is your call.
@@ -121,8 +126,8 @@ widgets can call the API directly with no server-side proxy.
 Branch on the stable `code`, never the message.
 
 `INVALID_REQUEST` (an unsupported chain is one of these) · `UNSUPPORTED_TOKEN` · `NO_LIQUIDITY` ·
-`QUOTE_EXPIRED` · `QUOTE_INVALID` · `QUOTE_NOT_EXECUTABLE` · `BUILD_FAILED` · `RATE_LIMITED` ·
-`UNAUTHORIZED` · `INTERNAL`. Full table: <https://docs.ravn.exchange/errors>
+`QUOTE_EXPIRED` · `QUOTE_INVALID` · `QUOTE_NOT_EXECUTABLE` · `BUILD_FAILED` · `ORDER_REJECTED` ·
+`VENUE_RATE_LIMITED` · `RATE_LIMITED` · `UNAUTHORIZED` · `NOT_FOUND` · `NOT_CONFIGURED` · `INTERNAL`. Full table: <https://docs.ravn.exchange/errors>
 
 Every response carries `x-request-id`. Quote it if you report a bad quote — it's how we find it.
 
