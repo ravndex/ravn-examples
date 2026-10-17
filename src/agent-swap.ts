@@ -52,7 +52,7 @@ async function getQuote(input: { from: string; to: string; amount: string; desti
   const to = TOKENS[input.to];
   if (!from || !to) return { error: "unknown token" };
 
-  const quote = await ravn.quote({
+  const quote = await ravn.getQuote({
     inputChainId: from.chainId,
     inputToken: from.address,
     outputChainId: to.chainId,

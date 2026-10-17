@@ -1,13 +1,22 @@
 /**
- * A minimal, dependency-free RAVN client.
+ * The RAVN client every example shares: the official SDK, `@ravnexchange/sdk`, plus a few helpers.
  *
- * There is no RAVN SDK on purpose — the API is small enough that this file IS the SDK. Copy it
- * into your project and delete what you don't use.
+ * The SDK is a zero-dependency, typed wrapper around /api/v1 (quote, execute, submit-signature,
+ * submit-transaction, status). Its `executeAndTrack` runs a whole swap in the right order: the
+ * approval mined first, 0x Gasless's `approvalData`, RAVN's fee payment, and status polling with
+ * execute's quoteToken, its statusRef and the fee payment's hash.
  *
- * Docs: https://docs.ravn.exchange
+ * Docs: https://docs.ravn.exchange/sdks/core
  */
+import { RavnClient } from "@ravnexchange/sdk";
 
 export const RAVN_BASE = process.env.RAVN_BASE_URL ?? "https://app.ravn.exchange/api/v1";
+
+export const ravn = new RavnClient({
+  baseUrl: RAVN_BASE,
+  // Optional. Anonymous works at 30 req/min (status polls 120); a free key raises it to 120 (480).
+  apiKey: process.env.RAVN_API_KEY || undefined,
+});
 
 /** Native coin sentinel — use as a token address for ETH, BNB, AVAX, etc. */
 export const NATIVE = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -32,125 +41,6 @@ export const CHAIN = {
   solana: -2,
 } as const;
 
-export interface QuoteRequest {
-  inputChainId: number;
-  inputToken: string;
-  outputChainId: number;
-  outputToken: string;
-  /** Smallest unit, as a string: wei, lamports, satoshis. Never a float. */
-  inputAmount: string;
-  userAddress: string;
-  /** Required when the destination is a different ecosystem (e.g. an EVM sell landing in BTC). */
-  destinationAddress?: string;
-  refundAddress?: string;
-  slippageBps?: number;
-  rankingMode?: "best_output" | "fastest";
-}
-
-export interface Quote {
-  quoteToken: string;
-  venue: { id: string; name: string };
-  routeType: string;
-  input: { token: TokenInfo; amount: string };
-  output: { token: TokenInfo; amount: string };
-  fee: { bps: number; amount: string; token?: TokenInfo };
-  slippage: { bps: number; isFirm: boolean; guaranteedMin: string | null };
-  gas?: { native: string; nativeSymbol: string; usd: string | null; estimated: boolean };
-  estimatedTimeSeconds: number;
-  expiresAt: number;
-}
-
-export interface TokenInfo {
-  symbol: string;
-  name: string;
-  address: string;
-  decimals: number;
-  chainId: number;
-  isNative: boolean;
-}
-
-/**
- * An ERC-20 `approve()` you must land BEFORE the swap.
- *
- * Present only when the input token actually needs an allowance. Read the on-chain allowance
- * for `spender` first and skip this when it already covers `amount`.
- */
-export interface Approval {
-  /** The ERC-20 token contract to send this to. */
-  to: string;
-  /** Encoded approve(spender, amount) — send as-is. */
-  data: string;
-  value: string;
-  chainId?: number;
-  /** Who receives the allowance. */
-  spender?: string;
-  /** Minimum allowance this swap needs, smallest unit. */
-  amount: string;
-  /**
-   * The venue would rather you approve once for a large amount than per swap (CoW: an exact
-   * approval costs gas on every swap, cancelling out its gasless route). `data` still encodes
-   * the exact `amount` — raising it is your call. Both work.
-   */
-  unlimitedRecommended?: boolean;
-}
-
-export type Execution =
-  | { executionType: "TRANSACTION"; approval?: Approval; transaction: { to?: string; data?: string; value?: string; chainId?: number; serialized?: string } }
-  | { executionType: "SIGNATURE"; approval?: Approval; typedData?: Record<string, unknown>; approvalData?: Record<string, unknown>; submit: { url: string; payload?: Record<string, unknown> } }
-  | { executionType: "DEPOSIT"; deposit: { address: string; amount: string; chainId?: number }; statusRef: string };
-
-export interface SwapStatus {
-  status: "pending" | "processing" | "success" | "refunded" | "failed" | "unknown" | string;
-  [k: string]: unknown;
-}
-
-class RavnError extends Error {
-  constructor(public code: string, message: string, public requestId?: string) {
-    super(message);
-    this.name = "RavnError";
-  }
-}
-
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${RAVN_BASE}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      // Optional. Anonymous works at 30 req/min; a free key raises it to 120.
-      ...(process.env.RAVN_API_KEY ? { "x-api-key": process.env.RAVN_API_KEY } : {}),
-      ...init.headers,
-    },
-  });
-  const body = (await res.json()) as { data?: T; error?: { code?: string; message?: string } };
-  if (!res.ok || body.error) {
-    // Branch on the stable `code`, never the message.
-    throw new RavnError(
-      body?.error?.code ?? "UNKNOWN",
-      body?.error?.message ?? `HTTP ${res.status}`,
-      res.headers.get("x-request-id") ?? undefined
-    );
-  }
-  return body.data as T;
-}
-
-export const ravn = {
-  quote: (req: QuoteRequest) => call<Quote>("/quote", { method: "POST", body: JSON.stringify(req) }),
-
-  execute: (quoteToken: string, opts: { destinationAddress?: string; refundAddress?: string } = {}) =>
-    call<Execution>("/execute", { method: "POST", body: JSON.stringify({ quoteToken, ...opts }) }),
-
-  submitSignature: (quoteToken: string, signature: string, approvalSignature?: string) =>
-    call<{ statusRef?: string; [k: string]: unknown }>("/submit-signature", {
-      method: "POST",
-      body: JSON.stringify({ quoteToken, signature, ...(approvalSignature ? { approvalSignature } : {}) }),
-    }),
-
-  status: (quoteToken: string, ref: string) =>
-    call<SwapStatus>(`/status?quoteToken=${encodeURIComponent(quoteToken)}&ref=${encodeURIComponent(ref)}`),
-
-  health: () => call<{ status: string; venues: { id: string; name: string; healthy: boolean }[] }>("/health"),
-};
-
 /** Human amount → smallest unit, without floating-point error. */
 export function toBaseUnits(amount: string, decimals: number): string {
   const [whole, frac = ""] = amount.split(".");
@@ -163,5 +53,3 @@ export function fromBaseUnits(amount: string, decimals: number): string {
   const out = `${s.slice(0, -decimals) || "0"}.${s.slice(-decimals)}`.replace(/\.?0+$/, "");
   return out || "0";
 }
-
-export { RavnError };

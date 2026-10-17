@@ -1,19 +1,27 @@
 /**
- * USDC on Base → NATIVE Bitcoin, end to end.
+ * USDC on Base → NATIVE Bitcoin, end to end, on @ravnexchange/sdk's executeAndTrack.
  *
  * This is the example most swap APIs cannot run at all. The BTC that lands is real Bitcoin on
- * the Bitcoin network — not wBTC, not cbBTC, not a bridge receipt. RAVN races Garden, Chainflip,
- * THORChain, Relay and NEAR Intents for it and takes the best net output.
+ * the Bitcoin network — not wBTC, not cbBTC, not a bridge receipt. RAVN races every venue that
+ * can deliver it and takes the best net output.
  *
  *   DRY RUN (no wallet, no funds):  npm run btc-out
  *   REAL SWAP:                      set PRIVATE_KEY and EXECUTE=1
  *
  * Cross-ecosystem swaps need `destinationAddress` — your Bitcoin address — because the payout
  * chain has no concept of your EVM address.
+ *
+ * What it gets right, because these are where integrations lose swaps and fees:
+ *   - the approval is mined before the swap, and skipped when the allowance already covers it;
+ *   - RAVN's fee, when the execution carries one, is paid exactly as returned, after the swap;
+ *   - every status poll sends execute's quoteToken and statusRef, plus the fee payment's hash;
+ *   - polling runs to a final status (`expired` means a refund is still coming).
+ * See https://docs.ravn.exchange/collecting-your-fee
  */
-import { createWalletClient, createPublicClient, http, erc20Abi } from "viem";
+import { createWalletClient, encodeFunctionData, erc20Abi, http, publicActions, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { base } from "viem/chains";
+import { ExecuteAndTrackError, executeAndTrack, type SettlementStatus } from "@ravnexchange/sdk";
 import { ravn, CHAIN, fromBaseUnits, toBaseUnits } from "./ravn.js";
 
 const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -22,16 +30,19 @@ const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const BTC_DESTINATION = process.env.BTC_DESTINATION ?? "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
 const AMOUNT_USDC = process.env.AMOUNT_USDC ?? "25";
 
+// Final: nothing more will change. `expired` and `not_found` are not: keep polling them.
+const FINAL: SettlementStatus[] = ["success", "refunded", "failed", "unknown"];
+
 async function main() {
   const account = process.env.PRIVATE_KEY
-    ? privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`)
+    ? privateKeyToAccount(process.env.PRIVATE_KEY as Hex)
     : undefined;
   // A quote needs *an* address to price against; a real swap needs your actual one.
   const userAddress = account?.address ?? "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
 
   console.log(`\nQuoting ${AMOUNT_USDC} USDC (Base) → native BTC…`);
 
-  const quote = await ravn.quote({
+  const quote = await ravn.getQuote({
     inputChainId: CHAIN.base,
     inputToken: USDC_BASE,
     outputChainId: CHAIN.bitcoin,
@@ -43,68 +54,113 @@ async function main() {
 
   console.log(`  venue      ${quote.venue.name}`);
   console.log(`  you get    ${fromBaseUnits(quote.output.amount, quote.output.token.decimals)} BTC`);
-  console.log(`  RAVN fee   ${quote.fee.bps} bps`);
-  console.log(`  eta        ~${quote.estimatedTimeSeconds}s`);
+  console.log(`  fee        ${quote.fee.bps} bps${quote.fee.supported ? "" : " (this route can't carry one)"}`);
+  console.log(`  eta        ~${Math.round(quote.estimatedTimeSeconds)}s`);
 
   if (!account || process.env.EXECUTE !== "1") {
     console.log("\nDry run only. Set PRIVATE_KEY and EXECUTE=1 to actually swap.\n");
     return;
   }
 
-  const execution = await ravn.execute(quote.quoteToken, { destinationAddress: BTC_DESTINATION });
-  console.log(`  execution  ${execution.executionType}`);
+  const wallet = createWalletClient({ account, chain: base, transport: http() }).extend(publicActions);
+  // RAVN sends `value` as a decimal string; viem wants a bigint, and a lower-case address always
+  // passes its checksum check.
+  const asTx = (tx: { to?: string; data?: string; value?: string }) => ({
+    to: tx.to?.toLowerCase() as Hex,
+    data: tx.data as Hex | undefined,
+    value: BigInt(tx.value ?? "0"),
+  });
+  // Send and wait until mined; the hash only if this very transaction succeeded.
+  const sendAndConfirm = async (tx: { to?: string; data?: string; value?: string }) => {
+    const hash = await wallet.sendTransaction(asTx(tx));
+    const receipt = await wallet.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success" || receipt.transactionHash !== hash) throw new Error(`${hash} didn't succeed`);
+    return hash;
+  };
 
-  const wallet = createWalletClient({ account, chain: base, transport: http() });
-  const pub = createPublicClient({ chain: base, transport: http() });
+  const result = await executeAndTrack(
+    ravn,
+    { quoteToken: quote.quoteToken, destinationAddress: BTC_DESTINATION },
+    {
+      sendTransaction: (tx) => wallet.sendTransaction(asTx(tx)),
+      // Must resolve to the receipt itself (typed TransactionReceiptLike: viem's fits as is): RAVN's
+      // fee is only sent on a swap whose own receipt says success.
+      waitForReceipt: (hash) => wallet.waitForTransactionReceipt({ hash: hash as Hex }),
+      signTypedData: (typedData) => wallet.signTypedData(typedData as Parameters<typeof wallet.signTypedData>[0]),
+      // RAVN leaves `approval` out when its own allowance read covers it, but keeps it when that
+      // read fails: skip it then.
+      hasAllowance: async (approval) =>
+        !!approval.spender &&
+        (await wallet.readContract({
+          address: approval.to.toLowerCase() as Hex,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [account.address, approval.spender.toLowerCase() as Hex],
+        })) >= BigInt(approval.amount),
+    },
+    // executeAndTrack can poll for you (0.2.0: through `expired`/`not_found`, with retries). This
+    // script polls in track() instead, so a DEPOSIT, which executeAndTrack never polls, goes
+    // through the same loop.
+    { pollUntilTerminal: false }
+  );
+
+  const { execution } = result;
+  console.log(`  execution  ${execution.executionType}`);
+  if (result.txHash) console.log(`  → swap tx  ${result.txHash}`);
+  let txHash = result.statusTxHash;
 
   if (execution.executionType === "DEPOSIT") {
-    // Most BTC-out routes land here: send the input asset to an address RAVN gives you, and
-    // the venue delivers native BTC to your destination.
+    // executeAndTrack sends nothing for a DEPOSIT. The deposit names no token: send the quote's
+    // input token (USDC here), exactly deposit.amount, then RAVN's fee once it has confirmed.
     const { address, amount } = execution.deposit;
-    console.log(`  → sending ${amount} USDC-base-units to ${address}`);
-    const hash = await wallet.writeContract({
-      address: USDC_BASE, abi: erc20Abi, functionName: "transfer",
-      args: [address as `0x${string}`, BigInt(amount)],
+    const depositHash = await sendAndConfirm({
+      to: USDC_BASE,
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [address.toLowerCase() as Hex, BigInt(amount)] }),
     });
-    await pub.waitForTransactionReceipt({ hash });
-    await track(quote.quoteToken, execution.statusRef);
-    return;
-  }
-
-  if (execution.executionType === "TRANSACTION") {
-    // The approval, when present, MUST be mined before the swap or it reverts on transferFrom.
-    if (execution.approval) {
-      console.log(`  → approving ${execution.approval.spender}`);
-      const approveHash = await wallet.sendTransaction({
-        to: execution.approval.to as `0x${string}`,
-        data: execution.approval.data as `0x${string}`,
-        value: BigInt(execution.approval.value ?? "0"),
-      });
-      await pub.waitForTransactionReceipt({ hash: approveHash }); // wait for MINED, not broadcast
+    console.log(`  → deposit  ${depositHash}`);
+    // From Base it's always a transaction; Bitcoin and Solana fees go inside the deposit itself.
+    if (result.feePayment?.kind === "transaction") {
+      try {
+        txHash = await sendAndConfirm(result.feePayment.transaction);
+        console.log(`  → fee tx   ${txHash}`);
+      } catch (e) {
+        // The deposit is already sent: never stop here, or the swap goes untracked.
+        console.log(`  fee not paid, nothing is owed on this swap: ${(e as Error).message}`);
+      }
     }
-    const hash = await wallet.sendTransaction({
-      to: execution.transaction.to as `0x${string}`,
-      data: execution.transaction.data as `0x${string}`,
-      value: BigInt(execution.transaction.value ?? "0"),
-    });
-    console.log(`  → swap tx ${hash}`);
-    await pub.waitForTransactionReceipt({ hash });
-    await track(quote.quoteToken, hash);
   }
+  if (result.feeTxHash) console.log(`  → fee tx   ${result.feeTxHash}`);
+  if (result.feeError) console.log(`  fee not paid, nothing is owed on this swap: ${String(result.feeError)}`);
+
+  await track(result.quoteToken, result.statusRef ?? "", txHash);
 }
 
-async function track(quoteToken: string, ref: string) {
+/** Poll with execute's quoteToken, its ref and the fee payment's hash until the status is final. */
+async function track(quoteToken: string, ref: string, txHash?: string) {
   console.log("\nTracking…");
-  for (let i = 0; i < 60; i++) {
-    const s = await ravn.status(quoteToken, ref);
-    console.log(`  ${s.status}`);
-    if (["success", "refunded", "failed"].includes(s.status)) return;
+  let last = "";
+  // ponytail: 90 minutes covers a Bitcoin payout; past it, resume polling with the same three values.
+  for (let i = 0; i < 540; i++) {
+    try {
+      const { status } = await ravn.getStatus(quoteToken, ref, txHash);
+      if (status !== last) console.log(`  ${(last = status)}`);
+      if (FINAL.includes(status)) return;
+    } catch (e) {
+      // A rate limit or a network blip: the swap is out, so keep going.
+      console.log(`  status call failed, retrying: ${(e as Error).message}`);
+    }
     await new Promise((r) => setTimeout(r, 10_000));
   }
-  console.log("  still pending — cross-ecosystem swaps can take several minutes");
+  console.log(`  not final yet: keep polling with quoteToken, ref ${ref}${txHash ? ` and txHash ${txHash}` : ""}`);
 }
 
 main().catch((e) => {
-  console.error(`\n${e.name ?? "Error"}: ${e.message}${e.requestId ? ` (request ${e.requestId})` : ""}`);
+  const meta = e.meta ?? e.cause?.meta; // an ExecuteAndTrackError wraps the RavnApiError
+  console.error(`\n${e.name ?? "Error"}: ${e.message}${meta?.requestId ? ` (request ${meta.requestId})` : ""}`);
+  if (e instanceof ExecuteAndTrackError) {
+    // Something was already sent or signed (an approval, a signature): check it before retrying.
+    const { resetTxHash, approvalTxHash, txHash, statusRef, statusTxHash, signature } = e.partial;
+    console.error("  already sent or signed:", JSON.stringify({ resetTxHash, approvalTxHash, txHash, statusRef, statusTxHash, signature }));
+  }
   process.exit(1);
 });
