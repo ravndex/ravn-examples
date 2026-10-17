@@ -63,9 +63,10 @@ async function main() {
   }
 
   const wallet = createWalletClient({ account, chain: base, transport: http() }).extend(publicActions);
-  // RAVN sends `value` as a decimal string; viem wants a bigint.
+  // RAVN sends `value` as a decimal string; viem wants a bigint, and a lower-case address always
+  // passes its checksum check.
   const asTx = (tx: { to?: string; data?: string; value?: string }) => ({
-    to: tx.to as Hex,
+    to: tx.to?.toLowerCase() as Hex,
     data: tx.data as Hex | undefined,
     value: BigInt(tx.value ?? "0"),
   });
@@ -90,10 +91,10 @@ async function main() {
       hasAllowance: async (approval) =>
         !!approval.spender &&
         (await wallet.readContract({
-          address: approval.to as Hex,
+          address: approval.to.toLowerCase() as Hex,
           abi: erc20Abi,
           functionName: "allowance",
-          args: [account.address, approval.spender as Hex],
+          args: [account.address, approval.spender.toLowerCase() as Hex],
         })) >= BigInt(approval.amount),
     },
     // We poll ourselves (track below): it survives a failed status call and doesn't stop at
@@ -112,7 +113,7 @@ async function main() {
     const { address, amount } = execution.deposit;
     const depositHash = await sendAndConfirm({
       to: USDC_BASE,
-      data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [address as Hex, BigInt(amount)] }),
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [address.toLowerCase() as Hex, BigInt(amount)] }),
     });
     console.log(`  → deposit  ${depositHash}`);
     // From Base it's always a transaction; Bitcoin and Solana fees go inside the deposit itself.
